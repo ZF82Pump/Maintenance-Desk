@@ -1,0 +1,2 @@
+insert into public.pm_members(user_id, role)
+values ('f44c2089-1a4f-4023-9c1f-739846e2f8bc', 'admin');

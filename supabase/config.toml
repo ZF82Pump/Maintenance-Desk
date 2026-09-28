@@ -1,0 +1,5 @@
+project_id = "maintenance-desk"
+
+[functions.daily-reminders]
+verify_jwt = false
+# The function authenticates EVERY request with the private x-cron-secret header.
