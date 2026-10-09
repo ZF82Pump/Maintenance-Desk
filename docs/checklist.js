@@ -1,0 +1,28 @@
+import {addDays,dateNum,dateStr,todayIn} from './planning.js';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export function monthlyChecklist(data,month,today=todayIn(data.settings?.timezone),machineId=null){
+ if(!/^(19|20)\d{2}-(0[1-9]|1[0-2])$/.test(month))throw Error('Choose a month between January 1900 and December 2099.');
+ const start=month+'-01',end=addDays(addDays(start,32).slice(0,7)+'-01',-1),rows=[];
+ const machines=new Map(data.machines.map(m=>[m.id,m])),parts=new Map(data.parts.map(p=>[p.id,p]));
+ const base=c=>({component:c.name,machine:machines.get(c.machine_id)?.name||'Unknown machine',location:machines.get(c.machine_id)?.location||'',pn:parts.get(c.part_id)?.pn||'',part:parts.get(c.part_id)?.name||'',quantity:c.quantity});
+ for(const c of data.components){
+  if(machineId!==null&&c.machine_id!==machineId)continue;
+  for(const e of (data.service_events||[]).filter(e=>e.component_id===c.id&&e.completed_date>=start&&e.completed_date<=end))rows.push({...base(c),date:e.completed_date,quantity:e.quantity,status:'Recorded replacement'});
+  if(c.active===false)continue;
+  const due=c.inspection_due||addDays(c.last_replaced,c.interval_days);
+  if(due>=start&&due<=end)rows.push({...base(c),date:due,status:due<today?'Outstanding / overdue':'Scheduled'});
+  // Carry old outstanding work into the current month's checklist once.
+  if(month===today.slice(0,7)&&due<start)rows.push({...base(c),date:due,status:'Overdue carryover'});
+  const interval=Number(c.interval_days);if(!Number.isInteger(interval)||interval<1)continue;
+  const anchor=Math.max(dateNum(due),dateNum(today)),first=Math.max(1,Math.ceil((dateNum(start)-anchor)/interval));
+  for(let n=anchor+first*interval;n<=dateNum(end);n+=interval)rows.push({...base(c),date:dateStr(n),status:'Projected'});
+ }
+ return rows.sort((a,b)=>a.machine.localeCompare(b.machine)||a.date.localeCompare(b.date)||a.component.localeCompare(b.component));
+}
+export function checklistHTML(data,month,today=todayIn(data.settings?.timezone),machineId){
+ const machine=data.machines.find(m=>m.id===machineId);if(!machine)throw Error('Choose a machine for the checklist.');
+ const rows=monthlyChecklist(data,month,today,machineId),label=new Date(month+'-01T12:00:00Z').toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'});
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(machine.name)} — ${esc(label)} PM</title><style>
+ *{box-sizing:border-box}body{font:12px Arial,sans-serif;color:#172735;margin:28px auto;padding:0 16px;max-width:760px;background:white}h1{font-size:25px;margin:8px 0;overflow-wrap:anywhere}h2{font-size:15px}p{line-height:1.5}.eyebrow{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#456378}.meta{color:#52616c}.toolbar{display:flex;gap:12px;margin-bottom:24px}button{padding:10px 18px;background:#153c54;color:white;border:0;border-radius:5px;cursor:pointer}.heading{display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:2px solid #153c54;padding-bottom:16px}.headingtext{min-width:0}.zf{flex:0 0 58px;width:58px;height:58px;border:2px solid #153c54;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:bold;color:#153c54}.month{font-size:17px;color:#153c54}.notes{break-inside:avoid}.summary{display:flex;justify-content:space-between;margin:16px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#eaf0f4;text-align:left;font-size:10px;text-transform:uppercase}td,th{border:1px solid #96a5af;padding:9px 6px;overflow-wrap:anywhere}td{height:62px;vertical-align:top}small{display:block;color:#52616c;margin-top:4px;font-size:10px}thead{display:table-header-group}tr{break-inside:avoid;page-break-inside:avoid}.notes{margin-top:20px;line-height:30px}.line{border-bottom:1px solid #9ba8b1;height:30px}.instructions{font-size:11px;margin:14px 0}.footer{margin-top:16px;font-size:10px;color:#52616c}@page{size:letter portrait;margin:12mm}@media print{body{margin:0;padding:0;max-width:none}.toolbar{display:none}th{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
+ </style></head><body><div class="toolbar"><button id="print">Print / Save as PDF</button><button id="close">Close</button></div><div class="heading"><div class="headingtext"><div class="eyebrow">Monthly PM schedule</div><h1>${esc(machine.name)}</h1><div class="month">${esc(label)}</div>${machine.location?`<div class="meta">${esc(machine.location)}</div>`:''}</div><div class="zf" aria-label="ZF">ZF</div></div><div class="summary"><strong>${rows.length} maintenance entries</strong><span class="meta">Generated ${esc(today)}</span></div><table><colgroup><col style="width:22%"><col style="width:20%"><col style="width:6%"><col style="width:17%"><col style="width:16%"><col style="width:9%"><col style="width:10%"></colgroup><thead><tr><th>Component</th><th>Part / PN</th><th>Qty</th><th>Due / recorded date</th><th>Date performed</th><th>Shift</th><th>Initials</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.component)}</td><td><strong>${esc(r.pn)}</strong><small>${esc(r.part)}</small></td><td>${esc(r.quantity)}</td><td>${esc(r.date)}<small>${esc(r.status)}</small></td><td></td><td></td><td></td></tr>`).join('')||'<tr><td colspan="7">No recorded or scheduled maintenance entries for this month.</td></tr>'}</tbody></table><div class="notes"><strong>Notes / follow-up work</strong><div class="line"></div><div class="line"></div></div></body></html>`;
+}
